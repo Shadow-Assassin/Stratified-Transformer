@@ -10,21 +10,21 @@ DATA:
 
 TRAIN:
   #arch
-  arch: stratified_transformer
+  arch: dgcnn  # stratified_transformer
   stem_transformer: True
-  use_xyz: True
+  use_xyz: True  # pointops.queryandgroup()参数，用的false，该参数无效
   sync_bn: True  # adopt sync_bn or not
   rel_query: True
   rel_key: True
   rel_value: True
   quant_size: 0.01
   downsample_scale: 8
-  num_layers: 4 
-  patch_size: 1 
+  num_layers: 4
+  patch_size: 1
   window_size: 4
-  depths: [2, 2, 6, 2] 
-  channels: [48, 96, 192, 384] 
-  num_heads: [3, 6, 12, 24] 
+  depths: [2, 2, 6, 2]
+  channels: [48, 96, 192, 384]
+  num_heads: [3, 6, 12, 24]
   up_k: 3
   drop_path_rate: 0.3
   concat_xyz: True
@@ -39,18 +39,18 @@ TRAIN:
   transformer_lr_scale: 0.1
   jitter_sigma: 0.005
   jitter_clip: 0.02
-  scheduler_update: epoch 
-  scheduler: MultiStep 
+  scheduler_update: epoch
+  scheduler: MultiStep
   warmup: linear
   warmup_iters: 1500
   warmup_ratio: 0.000001
   use_amp: True
-  optimizer: AdamW 
+  optimizer: AdamW
   ignore_label: 255
   train_gpu: [0, 1]
   workers: 16  # data loader workers
-  batch_size: 8  # batch size for training
-  batch_size_val: 4  # batch size for validation during training, memory and speed tradeoff
+  batch_size: 2  # batch size for training
+  batch_size_val: 2  # batch size for validation during training, memory and speed tradeoff
   base_lr: 0.006
   epochs: 50
   start_epoch: 0
@@ -62,7 +62,7 @@ TRAIN:
   manual_seed: 123
   print_freq: 1
   save_freq: 1
-  save_path: runs/s3dis_stratified_transformer
+  save_path: runs/s3dis_stratified_transformer_debug
   weight:  # path to initial weight (default: none)
   resume:  # path to latest checkpoint (default: none)
   evaluate: True  # evaluate on validation set, extra gpu memory needed and small batch_size_val is recommend
@@ -80,7 +80,7 @@ TEST:
   split: val  # split in [train, val and test]
   test_gpu: [0]
   test_workers: 4
-  batch_size_test: 4
-  model_path: /home/zrfan/Stratified-Transformer/runs/s3dis_stratified_transformer/model/model_best.pth  # Fill the path of the trained .pth file model
-  save_folder: /home/zrfan/Stratified-Transformer/runs/s3dis_stratified_transformer/test/  # Fill the path to store the .npy files for each scene
+  batch_size_test: 2  # test.py会重新赋值5，该参数无效，已改
+  model_path: /home/zrfan/Stratified-Transformer/runs/s3dis_stratified_transformer_debug/model/model_best.pth  # Fill the path of the trained .pth file model
+  save_folder: /home/zrfan/Stratified-Transformer/runs/s3dis_stratified_transformer_debug/test/  # Fill the path to store the .npy files for each scene
   names_path: data/s3dis/s3dis_names.txt

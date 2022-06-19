@@ -16,6 +16,7 @@ import torch.utils.data
 from util import config, transform
 from util.common_util import AverageMeter, intersectionAndUnion, check_makedirs
 from util.voxelize import voxelize
+from util.logger import get_test_logger
 import torch_points_kernels as tp
 import torch.nn.functional as F
 
@@ -49,7 +50,7 @@ def get_logger():
 def main():
     global args, logger
     args = get_parser()
-    logger = get_logger()
+    logger = get_test_logger(args.save_folder)
     logger.info(args)
     assert args.classes > 1
     logger.info("=> creating model ...")
@@ -84,6 +85,10 @@ def main():
             rel_key=args.rel_key, rel_value=args.rel_value, drop_path_rate=args.drop_path_rate, \
             concat_xyz=args.concat_xyz, num_classes=args.classes, \
             ratio=args.ratio, k=args.k, prev_grid_size=args.grid_size, sigma=1.0, num_layers=args.num_layers, stem_transformer=args.stem_transformer)
+
+    elif args.arch == 'dgcnn':
+        from model.dgcnn import FixedGCNN
+        model = FixedGCNN(k=20)
 
     else:
         raise Exception('architecture {} not supported yet'.format(args.arch))
@@ -177,7 +182,7 @@ def data_load(data_name, transform):
     idx_data = []
     if args.voxel_size:
         coord_min = np.min(coord, 0)
-        coord -= coord_min
+        coord -= coord_min  # feat/255. : input_normalize() below
         idx_sort, count = voxelize(coord, args.voxel_size, mode=1)
         for i in range(count.max()):
             idx_select = np.cumsum(np.insert(count, 0, 0)[0:-1]) + i % count
@@ -202,7 +207,7 @@ def test(model, criterion, names, test_transform_set):
     intersection_meter = AverageMeter()
     union_meter = AverageMeter()
     target_meter = AverageMeter()
-    args.batch_size_test = 5 
+    # args.batch_size_test = 5
     # args.voxel_max = None
     model.eval()
 
@@ -229,23 +234,23 @@ def test(model, criterion, names, test_transform_set):
                 else:
                     coord, feat, label, idx_data = data_load(item, test_transform)
                     pred = torch.zeros((label.size, args.classes)).cuda()
-                    idx_size = len(idx_data)
+                    idx_size = len(idx_data)  # hash_key相同(位于同一个voxel)的坐标点个数最大值，为此需要多次采样一个点云，保证所有点计算至少一次，故一个点可能出现多次
                     idx_list, coord_list, feat_list, offset_list  = [], [], [], []
-                    for i in range(idx_size):
+                    for i in range(idx_size):  # multiple subclouds by grid sampling
                         logger.info('{}/{}: {}/{}/{}, {}'.format(idx + 1, len(data_list), i + 1, idx_size, idx_data[0].shape[0], item))
-                        idx_part = idx_data[i]
+                        idx_part = idx_data[i]  # 对第idx个点云（room）第i次采样所得部分点index
                         coord_part, feat_part = coord[idx_part], feat[idx_part]
                         if args.voxel_max and coord_part.shape[0] > args.voxel_max:
                             coord_p, idx_uni, cnt = np.random.rand(coord_part.shape[0]) * 1e-3, np.array([]), 0
-                            while idx_uni.size != idx_part.shape[0]:
-                                init_idx = np.argmin(coord_p)
+                            while idx_uni.size != idx_part.shape[0]:  # multiple cropped subclouds limited by voxel_max
+                                init_idx = np.argmin(coord_p)  # 采样中心
                                 dist = np.sum(np.power(coord_part - coord_part[init_idx], 2), 1)
                                 idx_crop = np.argsort(dist)[:args.voxel_max]
                                 coord_sub, feat_sub, idx_sub = coord_part[idx_crop], feat_part[idx_crop], idx_part[idx_crop]
                                 dist = dist[idx_crop]
                                 delta = np.square(1 - dist / np.max(dist))
-                                coord_p[idx_crop] += delta
-                                coord_sub, feat_sub = input_normalize(coord_sub, feat_sub)
+                                coord_p[idx_crop] += delta  # 离当前采样中心越近的点，下一次作为采样中心的概率越小（小于1e-3的delta很少）
+                                coord_sub, feat_sub = input_normalize(coord_sub, feat_sub)  # 子点云（点数超过voexl_max）的子点云
                                 idx_list.append(idx_sub), coord_list.append(coord_sub), feat_list.append(feat_sub), offset_list.append(idx_sub.size)
                                 idx_uni = np.unique(np.concatenate((idx_uni, idx_sub)))
                                 # cnt += 1; logger.info('cnt={}, idx_sub/idx={}/{}'.format(cnt, idx_uni.size, idx_part.shape[0]))
@@ -253,10 +258,10 @@ def test(model, criterion, names, test_transform_set):
                             coord_part, feat_part = input_normalize(coord_part, feat_part)
                             idx_list.append(idx_part), coord_list.append(coord_part), feat_list.append(feat_part), offset_list.append(idx_part.size)
                     batch_num = int(np.ceil(len(idx_list) / args.batch_size_test))
-                    for i in range(batch_num):
+                    for i in range(batch_num):  # 将（cropped）subclouds（样本）组成一个个batch
                         s_i, e_i = i * args.batch_size_test, min((i + 1) * args.batch_size_test, len(idx_list))
                         idx_part, coord_part, feat_part, offset_part = idx_list[s_i:e_i], coord_list[s_i:e_i], feat_list[s_i:e_i], offset_list[s_i:e_i]
-                        idx_part = np.concatenate(idx_part)
+                        idx_part = np.concatenate(idx_part)  # 前面的for循环idx_part是单个子点云，这里的是一个batch的多个子点云（点可能重复）
                         coord_part = torch.FloatTensor(np.concatenate(coord_part)).cuda(non_blocking=True)
                         feat_part = torch.FloatTensor(np.concatenate(feat_part)).cuda(non_blocking=True)
                         offset_part = torch.IntTensor(np.cumsum(offset_part)).cuda(non_blocking=True)
@@ -269,6 +274,8 @@ def test(model, criterion, names, test_transform_set):
                             sigma = 1.0
                             radius = 2.5 * args.grid_size * sigma
                             neighbor_idx = tp.ball_query(radius, args.max_num_neighbors, coord_part, coord_part, mode="partial_dense", batch_x=batch, batch_y=batch)[0]
+                            for point in range(neighbor_idx.size(0)):
+                                neighbor_idx[point, neighbor_idx[point] == -1] = point
                             neighbor_idx = neighbor_idx.cuda(non_blocking=True)
 
                             if args.concat_xyz:
@@ -278,9 +285,10 @@ def test(model, criterion, names, test_transform_set):
                             pred_part = F.softmax(pred_part, -1) # Add softmax
 
                         torch.cuda.empty_cache()
-                        pred[idx_part, :] += pred_part
+                        # pred[idx_part, :] += pred_part  # 若后面的idx_part遇到重复的点，概率分布叠加，相当于多次计算取平均分布。但是，本次idx_part中，点重复出现，只有最后一次有效！
+                        pred.scatter_(0, torch.from_numpy(idx_part)[:, None].expand(-1, pred.size(1)).to(pred.device), pred_part, reduce='add')
                         logger.info('Test: {}/{}, {}/{}, {}/{}, {}/{}'.format(aug_id+1, len(test_transform_set), idx + 1, len(data_list), e_i, len(idx_list), args.voxel_max, idx_part.shape[0]))
-                pred = pred / (pred.sum(-1)[:, None]+1e-8)
+                pred = pred / (pred.sum(-1)[:, None]+1e-8)  # pred.sum(-1).mean()==4.2说明平均每个点计算了4次
                 pred_all += pred
             pred = pred_all / len(test_transform_set)
             loss = criterion(pred, torch.LongTensor(label).cuda(non_blocking=True))  # for reference

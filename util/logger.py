@@ -79,6 +79,29 @@ def get_logger(
 
     return logger
 
+
+def get_test_logger(output):
+    logger_name = "main-logger"
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    fmt = "[%(asctime)s %(levelname)s %(filename)s line %(lineno)d %(process)d] %(message)s"
+    handler.setFormatter(logging.Formatter(fmt))
+    logger.addHandler(handler)
+    if output is not None:
+        if output.endswith(".txt") or output.endswith(".log"):
+            filename = output
+        else:
+            filename = os.path.join(output, "log.txt")
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+
+        fh = logging.StreamHandler(_cached_log_stream(filename))
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(logging.Formatter(fmt))
+        logger.addHandler(fh)
+    return logger
+
+
 # cache the opened file object, so that different calls to `setup_logger`
 # with the same file name can safely write to the same file.
 @functools.lru_cache(maxsize=None)

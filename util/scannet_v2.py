@@ -1,6 +1,6 @@
 import os
 import numpy as np
-import SharedArray as SA
+# import SharedArray as SA
 
 import torch
 from torch.utils.data import Dataset

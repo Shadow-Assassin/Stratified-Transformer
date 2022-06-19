@@ -183,3 +183,17 @@ def smooth_loss(output, target, eps=0.1):
     log_prob = F.log_softmax(output, dim=1)
     loss = (-w * log_prob).sum(dim=1).mean()
     return loss
+
+
+def index_points(points, idx):
+    """
+    Input:
+        points: input points data, [N, C]
+        idx: sample index data, [S, [K]]
+    Return:
+        new_points:, indexed points data, [S, [K], C]
+    """
+    raw_size = idx.size()
+    idx = idx.reshape(-1)
+    res = torch.gather(points, 0, idx[:, None].expand(-1, points.size(-1)))
+    return res.reshape(*raw_size, -1)

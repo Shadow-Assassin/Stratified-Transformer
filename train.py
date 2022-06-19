@@ -124,6 +124,10 @@ def main_worker(gpu, ngpus_per_node, argss):
             concat_xyz=args.concat_xyz, num_classes=args.classes, \
             ratio=args.ratio, k=args.k, prev_grid_size=args.grid_size, sigma=1.0, num_layers=args.num_layers, stem_transformer=args.stem_transformer)
 
+    elif args.arch == 'dgcnn':
+        from model.dgcnn import FixedGCNN
+        model = FixedGCNN(k=20)
+
     else:
         raise Exception('architecture {} not supported yet'.format(args.arch))
     
@@ -167,8 +171,8 @@ def main_worker(gpu, ngpus_per_node, argss):
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model).cuda()
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[gpu], find_unused_parameters=True)
     else:
-        model = torch.nn.DataParallel(model.cuda())
-
+        # model = torch.nn.DataParallel(model.cuda())
+        model = model.cuda()
     if args.weight:
         if os.path.isfile(args.weight):
             if main_process():
@@ -241,7 +245,7 @@ def main_worker(gpu, ngpus_per_node, argss):
 
     val_transform = None
     if args.data_name == 's3dis':
-        val_data = S3DIS(split='val', data_root=args.data_root, test_area=args.test_area, voxel_size=args.voxel_size, voxel_max=800000, transform=val_transform)
+        val_data = S3DIS(split='val', data_root=args.data_root, test_area=args.test_area, voxel_size=args.voxel_size, voxel_max=args.voxel_max, transform=val_transform)
     elif args.data_name == 'scannetv2':
         val_data = Scannetv2(split='val', data_root=args.data_root, voxel_size=args.voxel_size, voxel_max=800000, transform=val_transform)
     else:
@@ -361,7 +365,9 @@ def train(train_loader, model, criterion, optimizer, epoch, scaler, scheduler):
         sigma = 1.0
         radius = 2.5 * args.grid_size * sigma
         neighbor_idx = tp.ball_query(radius, args.max_num_neighbors, coord, coord, mode="partial_dense", batch_x=batch, batch_y=batch)[0]
-    
+        for point in range(neighbor_idx.size(0)):
+            neighbor_idx[point, neighbor_idx[point] == -1] = point
+
         coord, feat, target, offset = coord.cuda(non_blocking=True), feat.cuda(non_blocking=True), target.cuda(non_blocking=True), offset.cuda(non_blocking=True)
         batch = batch.cuda(non_blocking=True)
         neighbor_idx = neighbor_idx.cuda(non_blocking=True)
@@ -476,7 +482,9 @@ def validate(val_loader, model, criterion):
         sigma = 1.0
         radius = 2.5 * args.grid_size * sigma
         neighbor_idx = tp.ball_query(radius, args.max_num_neighbors, coord, coord, mode="partial_dense", batch_x=batch, batch_y=batch)[0]
-    
+        for point in range(neighbor_idx.size(0)):
+            neighbor_idx[point, neighbor_idx[point] == -1] = point
+
         coord, feat, target, offset = coord.cuda(non_blocking=True), feat.cuda(non_blocking=True), target.cuda(non_blocking=True), offset.cuda(non_blocking=True)
         batch = batch.cuda(non_blocking=True)
         neighbor_idx = neighbor_idx.cuda(non_blocking=True)

@@ -8,37 +8,37 @@ from torch_geometric.nn import voxel_grid
 from lib.pointops2.functions import pointops
 
 def get_indice_pairs(p2v_map, counts, new_p2v_map, new_counts, downsample_idx, batch, xyz, window_size, i):
-    # p2v_map: [n, k]
-    # counts: [n, ]
+    # p2v_map: [n, k] 第i行j列元素是第i个voxel中第j个点在总的N个点中的index，当j超过第i个voxel中点的个数时元素值无意义（为0）
+    # counts: [n, ] 第i个元素是第i个voxel中点的个数，最大值为k
     
     n, k = p2v_map.shape
-    mask = torch.arange(k).unsqueeze(0).cuda() < counts.unsqueeze(-1) #[n, k]
-    mask_mat = (mask.unsqueeze(-1) & mask.unsqueeze(-2)) #[n, k, k]
+    mask = torch.arange(k).unsqueeze(0).cuda() < counts.unsqueeze(-1)  # [n, k] ij元素表示第i个voxel中第j个点是否存在
+    mask_mat = (mask.unsqueeze(-1) & mask.unsqueeze(-2))  # [n, k, k] iuv元素表示第i个voxel中第u和第v个点是否都存在
     index_0 = p2v_map.unsqueeze(-1).expand(-1, -1, k)[mask_mat] #[M, ]
     index_1 = p2v_map.unsqueeze(1).expand(-1, k, -1)[mask_mat] #[M, ]
 
     downsample_mask = torch.zeros_like(batch).bool() #[N, ]
     downsample_mask[downsample_idx.long()] = True
     
-    downsample_mask = downsample_mask[new_p2v_map] #[n, k]
-    n, k = new_p2v_map.shape
+    downsample_mask = downsample_mask[new_p2v_map]  # [n, k] ij元素表示第i个voxel中第j个点是否被下采样
+    n, k = new_p2v_map.shape  # new_n < n, new_k > k
     mask = torch.arange(k).unsqueeze(0).cuda() < new_counts.unsqueeze(-1) #[n, k]
-    downsample_mask = downsample_mask & mask
-    mask_mat = (mask.unsqueeze(-1) & downsample_mask.unsqueeze(-2)) #[n, k, k]
+    downsample_mask = downsample_mask & mask  # [n, k] ij元素表示第i个voxel中第j个点是否（存在 且 被下采样）
+    mask_mat = (mask.unsqueeze(-1) & downsample_mask.unsqueeze(-2))  # [n, k, k] iuv元素表示第i个voxel中是否（uv存在 且 v被下采样）
     xyz_min = xyz.min(0)[0]
     if i % 2 == 0:
-        window_coord = (xyz[new_p2v_map] - xyz_min) // window_size #[n, k, 3]
+        window_coord = (xyz[new_p2v_map] - xyz_min) // window_size  # [n, k, 3] 表示每个点的voxel量化坐标， window_size是p2v_map网格化所用
     else:
         window_coord = (xyz[new_p2v_map] + 1/2*window_size - xyz_min) // window_size #[n, k, 3]
 
-    mask_mat_prev = (window_coord.unsqueeze(2) != window_coord.unsqueeze(1)).any(-1) #[n, k, k]
-    mask_mat = mask_mat & mask_mat_prev #[n, k, k]
+    mask_mat_prev = (window_coord.unsqueeze(2) != window_coord.unsqueeze(1)).any(-1)  # [n, k, k] iuv元素表示第i个voxel中的uv两点是否满足（量化坐标不同，即大窗中的点分属于不同的小窗）
+    mask_mat = mask_mat & mask_mat_prev  # [n, k, k] iuv元素表示第i个voxel中是否（uv存在 且 v被下采样 且 uv量化坐标不同）
 
-    new_index_0 = new_p2v_map.unsqueeze(-1).expand(-1, -1, k)[mask_mat] #[M, ]
-    new_index_1 = new_p2v_map.unsqueeze(1).expand(-1, k, -1)[mask_mat] #[M, ]
+    new_index_0 = new_p2v_map.unsqueeze(-1).expand(-1, -1, k)[mask_mat]  # [M, ] 取第i个voxel中的第u个点的index共<=counts[i]次
+    new_index_1 = new_p2v_map.unsqueeze(1).expand(-1, k, -1)[mask_mat]  # [M, ] 取第i个voxel中的第v个点的index共counts[i]次，排列顺序也不同！
 
-    index_0 = torch.cat([index_0, new_index_0], 0)
-    index_1 = torch.cat([index_1, new_index_1], 0)
+    index_0 = torch.cat([index_0, new_index_0], 0)  # query点, 考虑与小窗内其他所有点（key1）的注意力+下采样后大窗内不同小窗的所有点（key2）之间注意力
+    index_1 = torch.cat([index_1, new_index_1], 0)  # key， 与query一一对应
     return index_0, index_1
 
 def grid_sample(pos, batch, size, start, return_p2v=True):
@@ -47,7 +47,7 @@ def grid_sample(pos, batch, size, start, return_p2v=True):
     # size: float [3, ]
     # start: float [3, ] / None
 
-    cluster = voxel_grid(pos, batch, size, start=start) #[N, ]
+    cluster = voxel_grid(pos, batch, size, start=start)  # [N, ] batch的存在使得不同sample就算来自同一个原始点云，也不会互相影响，相当于多一维batch坐标
 
     if return_p2v == False:
         unique, cluster = torch.unique(cluster, sorted=True, return_inverse=True)
@@ -103,7 +103,7 @@ class TransitionDown(nn.Module):
         idx = pointops.furthestsampling(xyz, offset, n_offset)  # (m)
         n_xyz = xyz[idx.long(), :]  # (m, 3)
 
-        feats = pointops.queryandgroup(self.k, xyz, n_xyz, feats, None, offset, n_offset, use_xyz=False)  # (m, nsample, 3+c)
+        feats = pointops.queryandgroup(self.k, xyz, n_xyz, feats, None, offset, n_offset, use_xyz=False)  # use_xyz=True (m, nsample, 3+c)
         m, k, c = feats.shape
         feats = self.linear(self.norm(feats.view(m*k, c)).view(m, k, c)).transpose(1, 2).contiguous()
         feats = self.pool(feats).squeeze(-1)  # (m, c)
@@ -274,6 +274,7 @@ class BasicLayer(nn.Module):
         offset_[1:] = offset_[1:] - offset_[:-1]
         batch = torch.cat([torch.tensor([ii]*o) for ii,o in enumerate(offset_)], 0).long().cuda()
 
+        # num_points(N), num_voxels(n) x max_num_points_per_voxel(k), num_voxels(n)
         v2p_map, p2v_map, counts = grid_sample(xyz, batch, window_size, start=None)
 
         shift_size = 1/2*window_size
@@ -288,6 +289,7 @@ class BasicLayer(nn.Module):
         new_offset = torch.cuda.IntTensor(new_offset)
         downsample_idx = pointops.furthestsampling(xyz, offset.int(), new_offset.int()) #[N/16,]
 
+        # larger scale (stratified)
         new_window_size = 2 * torch.tensor([self.window_size]*3).type_as(xyz).to(xyz.device)
         
         # offset_ = new_offset.clone()
@@ -300,9 +302,11 @@ class BasicLayer(nn.Module):
         shift_new_v2p_map, shift_new_p2v_map, shift_new_counts = grid_sample(xyz+shift_size, batch, new_window_size, start=xyz.min(0)[0])
         
         for i, blk in enumerate(self.blocks):
+            # small voxel
             p2v_map_blk = p2v_map if i % 2 == 0 else shift_p2v_map
             counts_blk = counts if i % 2 == 0 else shift_counts
 
+            # big voxel
             new_p2v_map_blk = new_p2v_map if i % 2 == 0 else shift_new_p2v_map
             new_counts_blk = new_counts if i % 2 == 0 else shift_new_counts
 
@@ -311,7 +315,7 @@ class BasicLayer(nn.Module):
             # rearrange index for acceleration
             index_0, indices = torch.sort(index_0) #[M,]
             index_1 = index_1[indices] #[M,]
-            index_0_counts = index_0.bincount()
+            index_0_counts = index_0.bincount()  # 统计点的index出现了多少次
             n_max = index_0_counts.max()
             index_0_offsets = index_0_counts.cumsum(dim=-1) #[N]
             index_0_offsets = torch.cat([torch.zeros(1, dtype=torch.long).cuda(), index_0_offsets], 0) #[N+1]

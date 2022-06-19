@@ -1,0 +1,15 @@
+wandb
+open3d==0.13
+hydra-core ==1.0.0
+torchnet==0.0.4
+pytorch_metric_learning==0.9.87
+h5py==3.3.0
+laspy==2.0.3
+plyfile==0.7.2
+tqdm==4.40
+gdown==3.12
+matplotlib==3.1
+tensorboard==2.1
+imageio
+scikit-image
+torch-points-kernels
